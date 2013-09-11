@@ -942,8 +942,10 @@ SYSCALL_DEFINE3(shmctl, int, shmid, int, cmd, struct shmid_ds __user *, buf)
 	int err, version;
 	struct ipc_namespace *ns;
 
-	if (cmd < 0 || shmid < 0)
-		return -EINVAL;
+	if (cmd < 0 || shmid < 0) {
+		err = -EINVAL;
+		goto out;
+	}
 
 	version = ipc_parse_version(&cmd);
 	ns = current->nsproxy->ipc_ns;
@@ -954,9 +956,7 @@ SYSCALL_DEFINE3(shmctl, int, shmid, int, cmd, struct shmid_ds __user *, buf)
 	case SHM_STAT:
 	case IPC_STAT:
 		return shmctl_nolock(ns, shmid, cmd, version, buf);
-	case IPC_RMID:
-	case IPC_SET:
-		return shmctl_down(ns, shmid, cmd, buf, version);
+
 	case SHM_LOCK:
 	case SHM_UNLOCK:
 	{
