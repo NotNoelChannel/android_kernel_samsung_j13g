@@ -1116,14 +1116,6 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg,
 		goto out_unlock;
 
 	ipc_lock_object(&shp->shm_perm);
-
-	/* check if shm_destroy() is tearing down shp */
-	if (shp->shm_file == NULL) {
-		ipc_unlock_object(&shp->shm_perm);
-		err = -EIDRM;
-		goto out_unlock;
-	}
-
 	path = shp->shm_file->f_path;
 	path_get(&path);
 	shp->shm_nattch++;
@@ -1204,7 +1196,7 @@ out_nattch:
 	return err;
 
 out_unlock:
-	shm_unlock(shp);
+	rcu_read_unlock();
 out:
 	return err;
 }
