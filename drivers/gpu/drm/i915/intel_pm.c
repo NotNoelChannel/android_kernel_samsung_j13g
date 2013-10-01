@@ -2742,6 +2742,205 @@ static void gen6_update_ring_freq(struct drm_device *dev)
 	}
 }
 
+int valleyview_rps_max_freq(struct drm_i915_private *dev_priv)
+{
+	u32 val, rp0;
+
+	val = vlv_nc_read(dev_priv, IOSF_NC_FB_GFX_FREQ_FUSE);
+
+	rp0 = (val & FB_GFX_MAX_FREQ_FUSE_MASK) >> FB_GFX_MAX_FREQ_FUSE_SHIFT;
+	/* Clamp to max */
+	rp0 = min_t(u32, rp0, 0xea);
+
+	return rp0;
+}
+
+static int valleyview_rps_rpe_freq(struct drm_i915_private *dev_priv)
+{
+	u32 val, rpe;
+
+	val = vlv_nc_read(dev_priv, IOSF_NC_FB_GFX_FMAX_FUSE_LO);
+	rpe = (val & FB_FMAX_VMIN_FREQ_LO_MASK) >> FB_FMAX_VMIN_FREQ_LO_SHIFT;
+	val = vlv_nc_read(dev_priv, IOSF_NC_FB_GFX_FMAX_FUSE_HI);
+	rpe |= (val & FB_FMAX_VMIN_FREQ_HI_MASK) << 5;
+
+	return rpe;
+}
+
+int valleyview_rps_min_freq(struct drm_i915_private *dev_priv)
+{
+	return vlv_punit_read(dev_priv, PUNIT_REG_GPU_LFM) & 0xff;
+}
+
+static void vlv_rps_timer_work(struct work_struct *work)
+{
+	drm_i915_private_t *dev_priv = container_of(work, drm_i915_private_t,
+						    rps.vlv_work.work);
+
+	/*
+	 * Timer fired, we must be idle.  Drop to min voltage state.
+	 * Note: we use RPe here since it should match the
+	 * Vmin we were shooting for.  That should give us better
+	 * perf when we come back out of RC6 than if we used the
+	 * min freq available.
+	 */
+	mutex_lock(&dev_priv->rps.hw_lock);
+	if (dev_priv->rps.cur_delay > dev_priv->rps.rpe_delay)
+		valleyview_set_rps(dev_priv->dev, dev_priv->rps.rpe_delay);
+	mutex_unlock(&dev_priv->rps.hw_lock);
+}
+
+static void valleyview_setup_pctx(struct drm_device *dev)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct drm_i915_gem_object *pctx;
+	unsigned long pctx_paddr;
+	u32 pcbr;
+	int pctx_size = 24*1024;
+
+	pcbr = I915_READ(VLV_PCBR);
+	if (pcbr) {
+		/* BIOS set it up already, grab the pre-alloc'd space */
+		int pcbr_offset;
+
+		pcbr_offset = (pcbr & (~4095)) - dev_priv->mm.stolen_base;
+		pctx = i915_gem_object_create_stolen_for_preallocated(dev_priv->dev,
+								      pcbr_offset,
+								      -1,
+								      pctx_size);
+		goto out;
+	}
+
+	/*
+	 * From the Gunit register HAS:
+	 * The Gfx driver is expected to program this register and ensure
+	 * proper allocation within Gfx stolen memory.  For example, this
+	 * register should be programmed such than the PCBR range does not
+	 * overlap with other ranges, such as the frame buffer, protected
+	 * memory, or any other relevant ranges.
+	 */
+	pctx = i915_gem_object_create_stolen(dev, pctx_size);
+	if (!pctx) {
+		DRM_DEBUG("not enough stolen space for PCTX, disabling\n");
+		return;
+	}
+
+	pctx_paddr = dev_priv->mm.stolen_base + pctx->stolen->start;
+	I915_WRITE(VLV_PCBR, pctx_paddr);
+
+out:
+	dev_priv->vlv_pctx = pctx;
+}
+
+static void valleyview_enable_rps(struct drm_device *dev)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct intel_ring_buffer *ring;
+	u32 gtfifodbg, val;
+	int i;
+
+	WARN_ON(!mutex_is_locked(&dev_priv->rps.hw_lock));
+
+	if ((gtfifodbg = I915_READ(GTFIFODBG))) {
+		DRM_ERROR("GT fifo had a previous error %x\n", gtfifodbg);
+		I915_WRITE(GTFIFODBG, gtfifodbg);
+	}
+
+	valleyview_setup_pctx(dev);
+
+	gen6_gt_force_wake_get(dev_priv);
+
+	I915_WRITE(GEN6_RP_UP_THRESHOLD, 59400);
+	I915_WRITE(GEN6_RP_DOWN_THRESHOLD, 245000);
+	I915_WRITE(GEN6_RP_UP_EI, 66000);
+	I915_WRITE(GEN6_RP_DOWN_EI, 350000);
+
+	I915_WRITE(GEN6_RP_IDLE_HYSTERSIS, 10);
+
+	I915_WRITE(GEN6_RP_CONTROL,
+		   GEN6_RP_MEDIA_TURBO |
+		   GEN6_RP_MEDIA_HW_NORMAL_MODE |
+		   GEN6_RP_MEDIA_IS_GFX |
+		   GEN6_RP_ENABLE |
+		   GEN6_RP_UP_BUSY_AVG |
+		   GEN6_RP_DOWN_IDLE_CONT);
+
+	I915_WRITE(GEN6_RC6_WAKE_RATE_LIMIT, 0x00280000);
+	I915_WRITE(GEN6_RC_EVALUATION_INTERVAL, 125000);
+	I915_WRITE(GEN6_RC_IDLE_HYSTERSIS, 25);
+
+	for_each_ring(ring, dev_priv, i)
+		I915_WRITE(RING_MAX_IDLE(ring->mmio_base), 10);
+
+	I915_WRITE(GEN6_RC6_THRESHOLD, 0xc350);
+
+	/* allows RC6 residency counter to work */
+	I915_WRITE(0x138104, _MASKED_BIT_ENABLE(0x3));
+	I915_WRITE(GEN6_RC_CONTROL,
+		   GEN7_RC_CTL_TO_MODE);
+
+	val = vlv_punit_read(dev_priv, PUNIT_REG_GPU_FREQ_STS);
+	switch ((val >> 6) & 3) {
+	case 0:
+	case 1:
+		dev_priv->mem_freq = 800;
+		break;
+	case 2:
+		dev_priv->mem_freq = 1066;
+		break;
+	case 3:
+		dev_priv->mem_freq = 1333;
+		break;
+	}
+	DRM_DEBUG_DRIVER("DDR speed: %d MHz", dev_priv->mem_freq);
+
+	DRM_DEBUG_DRIVER("GPLL enabled? %s\n", val & 0x10 ? "yes" : "no");
+	DRM_DEBUG_DRIVER("GPU status: 0x%08x\n", val);
+
+	dev_priv->rps.cur_delay = (val >> 8) & 0xff;
+	DRM_DEBUG_DRIVER("current GPU freq: %d MHz (%u)\n",
+			 vlv_gpu_freq(dev_priv->mem_freq,
+				      dev_priv->rps.cur_delay),
+			 dev_priv->rps.cur_delay);
+
+	dev_priv->rps.max_delay = valleyview_rps_max_freq(dev_priv);
+	dev_priv->rps.hw_max = dev_priv->rps.max_delay;
+	DRM_DEBUG_DRIVER("max GPU freq: %d MHz (%u)\n",
+			 vlv_gpu_freq(dev_priv->mem_freq,
+				      dev_priv->rps.max_delay),
+			 dev_priv->rps.max_delay);
+
+	dev_priv->rps.rpe_delay = valleyview_rps_rpe_freq(dev_priv);
+	DRM_DEBUG_DRIVER("RPe GPU freq: %d MHz (%u)\n",
+			 vlv_gpu_freq(dev_priv->mem_freq,
+				      dev_priv->rps.rpe_delay),
+			 dev_priv->rps.rpe_delay);
+
+	dev_priv->rps.min_delay = valleyview_rps_min_freq(dev_priv);
+	DRM_DEBUG_DRIVER("min GPU freq: %d MHz (%u)\n",
+			 vlv_gpu_freq(dev_priv->mem_freq,
+				      dev_priv->rps.min_delay),
+			 dev_priv->rps.min_delay);
+
+	DRM_DEBUG_DRIVER("setting GPU freq to %d MHz (%u)\n",
+			 vlv_gpu_freq(dev_priv->mem_freq,
+				      dev_priv->rps.rpe_delay),
+			 dev_priv->rps.rpe_delay);
+
+	valleyview_set_rps(dev_priv->dev, dev_priv->rps.rpe_delay);
+
+	/* requires MSI enabled */
+	I915_WRITE(GEN6_PMIER, GEN6_PM_RPS_EVENTS);
+	spin_lock_irq(&dev_priv->rps.lock);
+	WARN_ON(dev_priv->rps.pm_iir != 0);
+	I915_WRITE(GEN6_PMIMR, 0);
+	spin_unlock_irq(&dev_priv->rps.lock);
+	/* enable all PM interrupts */
+	I915_WRITE(GEN6_PMINTRMSK, 0);
+
+	gen6_gt_force_wake_put(dev_priv);
+}
+
 void ironlake_teardown_rc6(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
@@ -4559,6 +4758,8 @@ void intel_pm_init(struct drm_device *dev)
 
 	INIT_DELAYED_WORK(&dev_priv->rps.delayed_resume_work,
 			  intel_gen6_powersave_work);
+
+	INIT_DELAYED_WORK(&dev_priv->rps.vlv_work, vlv_rps_timer_work);
 }
 
 int sandybridge_pcode_read(struct drm_i915_private *dev_priv, u8 mbox, u32 *val)
