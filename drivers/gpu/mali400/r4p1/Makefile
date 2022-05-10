@@ -55,8 +55,6 @@ else
     endif
 endif
 
-
-
 ifeq ($(CONFIG_MALI400),y)
     MALI_ENABLE_GPU_CONTROL_IN_PARAM = 0
 else
