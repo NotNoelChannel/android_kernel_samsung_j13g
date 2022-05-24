@@ -18,6 +18,8 @@ jobs:
 
     - name: Building Kernel
       run: |
+        export KBUILD_BUILD_USER=J110H-Android
+        export KBUILD_BUILD_HOST=CyanogenMod
         make -j2 cyanogenmod_j1pop3g_defconfig
         make -j2
 
