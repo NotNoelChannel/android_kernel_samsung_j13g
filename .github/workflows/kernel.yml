@@ -1,4 +1,4 @@
-name: CyanogenMod Kernel CI
+name: Kernel CI
 
 on:
   workflow_dispatch:
