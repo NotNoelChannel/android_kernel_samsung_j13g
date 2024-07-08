@@ -273,13 +273,13 @@ static int key_ioctl( unsigned int cmd, unsigned long arg )
 	if( KEY_POWER == kit.val ) {
 		kit.row = AUTOTST_KEY_INVALID_ROW;
 		kit.col = AUTOTST_KEY_INVALID_COL;
-		kit.gio = EIC_KEY_POWER;
+		kit.gio = 0;
 	} else {
 		unsigned char rc = (kit.val & 0xF7);
 
 		kit.row = ((rc >> 4) & 0x0F);
 		kit.col = ((rc >> 0) & 0x0F);
-		kit.gio = 0;
+		kit.gio = 1;
 	}
 
 	if( 0 == ret ) {
