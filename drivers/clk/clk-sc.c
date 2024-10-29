@@ -216,8 +216,6 @@ static unsigned long sprd_clk_adjustable_pll_recalc_rate(struct clk_hw *hw,
 {
 	struct clk_sprd *pll = to_clk_sprd(hw);
 	unsigned int rate;
-
-#ifdef CONFIG_ARCH_SCX30G
 	unsigned int k = 0, mn, cfg1;
 	cfg1 = __raw_readl(pll->m.mul.reg);
 	mn = (cfg1 & BITS_PLL_NINT(~0)) >> SHFT_PLL_NINT;
@@ -230,15 +228,6 @@ static unsigned long sprd_clk_adjustable_pll_recalc_rate(struct clk_hw *hw,
 	    26 * (mn) * 1000000 + DIV_ROUND_CLOSEST(26 * k * 100,
 						    1048576) * 10000;
 	clk_debug("rate %u, k %u, mn %u\n", rate, k, mn);
-#else
-	unsigned int refin, mn;
-	refin = __pll_get_refin_rate(pll->m.mul.reg);
-	mn = (__raw_readl(pll->m.mul.reg)
-	      & pll->m.mul.msk) >> __ffs(pll->m.mul.msk);
-
-	rate = refin * mn;
-	clk_debug("rate %u, refin %u, mn %u\n", rate, refin, mn);
-#endif
 	return (unsigned long)rate;
 }
 
@@ -272,7 +261,6 @@ static int sprd_clk_adjustable_pll_set_rate(struct clk_hw *hw,
 {
 	struct clk_sprd *pll = to_clk_sprd(hw);
 	u32 old_rate = sprd_clk_adjustable_pll_recalc_rate(hw, 0) / 1000000;
-#ifdef CONFIG_ARCH_SCX30G
 	u32 k, mn, cfg1;
 
 	mn = (rate / 1000000) / 26;
@@ -287,16 +275,6 @@ static int sprd_clk_adjustable_pll_set_rate(struct clk_hw *hw,
 		  (u32) rate, k, mn);
 	__pllreg_write(pll->m.mul.reg, cfg1,
 		       BITS_PLL_KINT(~0) | BITS_PLL_NINT(~0) | BIT_PLL_SDM_EN);
-#else
-	u32 refin, mn;
-	refin = __pll_get_refin_rate(pll->m.mul.reg);
-	mn = rate / refin;
-	clk_debug("rate %u, refin %u, mn %u\n", (u32) rate, refin, mn);
-	if (mn <= pll->m.mul.msk >> __ffs(pll->m.mul.msk)) {
-		__pllreg_write(pll->m.mul.reg, mn << __ffs(pll->m.mul.msk),
-			       pll->m.mul.msk);
-	}
-#endif
 	__pll_enable_time(hw, old_rate);
 	return 0;
 }
