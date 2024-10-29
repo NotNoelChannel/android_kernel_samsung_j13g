@@ -461,27 +461,18 @@ static int sprd_mm_domain_state(struct clk_hw *hw)
 
 static int sprd_mm_domain_is_ready(struct clk_hw *hw)
 {
-#ifdef CONFIG_ARCH_SCX35
 	return sprd_mm_domain_state(hw) == BITS_PD_MM_TOP_STATE(0);
-#else
-	return 1;
-#endif
 }
 
 static int sprd_mm_domain_is_shutdown(struct clk_hw *hw)
 {
-#ifdef CONFIG_ARCH_SCX35
 	return sprd_mm_domain_state(hw) == BITS_PD_MM_TOP_STATE(7);
-#else
-	return 0;
-#endif
 }
 
 /* FIXME: mm domain soft-retention */
 static u32 saved_mm_ckg[10];
 static void sprd_mm_domain_save(struct clk_hw *hw)
 {
-#ifdef CONFIG_ARCH_SCX35
 	u32 *ckg = (u32 *) REG_MM_CLK_MM_AHB_CFG;
 	int i;
 	BUG_ON(!(sprd_mm_domain_is_ready(hw)));
@@ -491,12 +482,10 @@ static void sprd_mm_domain_save(struct clk_hw *hw)
 	}
 	clk_debug("ahb %08x sensor %08x vsp %08x\n", saved_mm_ckg[0],
 		  saved_mm_ckg[1], saved_mm_ckg[4]);
-#endif
 }
 
 static void sprd_mm_domain_restore(struct clk_hw *hw)
 {
-#ifdef CONFIG_ARCH_SCX35
 	u32 *ckg = (u32 *) REG_MM_CLK_MM_AHB_CFG;
 	int i;
 	clk_debug("ahb %08x sensor %08x vsp %08x\n", saved_mm_ckg[0],
@@ -506,12 +495,10 @@ static void sprd_mm_domain_restore(struct clk_hw *hw)
 	for (i = 0; i < ARRAY_SIZE(saved_mm_ckg); i++, ckg++) {
 		__raw_writel(saved_mm_ckg[i], ckg);
 	}
-#endif
 }
 
 static int __sprd_clk_mm_prepare(struct clk_hw *hw)
 {
-#ifdef CONFIG_ARCH_SCX35
 	if (!sprd_mm_domain_is_ready(hw)) {
 		unsigned long timeout =
 		    jiffies + msecs_to_jiffies(__SPRD_MM_TIMEOUT);
@@ -547,7 +534,6 @@ static int __sprd_clk_mm_prepare(struct clk_hw *hw)
 			__mmreg_set(hw, (void *)REG_MM_CLK_MM_AHB_CFG, 0x3);	/* set mm ahb 153.6MHz */
 		}
 	}
-#endif
 	return 0;
 }
 
@@ -930,10 +916,8 @@ static void __init of_sprd_gate_clk_setup(struct device_node *node)
 	if (of_get_property(node, "mm-domain", NULL)) {
 		init.ops = &sprd_mm_clk_gate_ops;
 	} else if (0 == strcmp(clk_name, "clk_mm")) {
-#ifdef CONFIG_ARCH_SCX35
 		init.ops = &sprd_clk_mm_gate_ops;
 		__sprd_clk_mm_prepare(&c->hw);
-#endif
 	}
 
 	init.parent_names = (parent_name ? &parent_name : NULL);
