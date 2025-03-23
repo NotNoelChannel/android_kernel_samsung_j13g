@@ -7510,7 +7510,7 @@ static const struct wiphy_wowlan_support brcm_wowlan_support = {
 };
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0) */
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 12, 0))
 static struct cfg80211_wowlan brcm_wowlan_config = {
 	.disconnect = true,
 	.gtk_rekey_failure = true,
@@ -7642,20 +7642,18 @@ static s32 wl_setup_wiphy(struct wireless_dev *wdev, struct device *sdiofunc_dev
 #endif
 
 #if defined(CONFIG_PM) && defined(WL_CFG80211_P2P_DEV_IF)
-	/*
-	 * From linux-3.10 kernel, wowlan packet filter is mandated to avoid the
-	 * disconnection of connected network before suspend. So a dummy wowlan
-	 * filter is configured for kernels linux-3.8 and above.
-	 */
+    /*
+     * Since Linux 3.10 the wowlan packet filter is required to prevent
+     * disconnection during suspend. A dummy wowlan filter is configured for
+     * kernels 3.8 and above.
+     */
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0))
-	wdev->wiphy->wowlan = &brcm_wowlan_support;
-
-	/* If this is not provided cfg stack will get disconnect
-	* during suspend.
-	*/
-	wdev->wiphy->wowlan_config = &brcm_wowlan_config;
+    /* Copy the support structure (structure assignment is fine too) */
+    memcpy(&wdev->wiphy->wowlan, &brcm_wowlan_support,
+           sizeof(wdev->wiphy->wowlan));
+    /* Note: The wowlan_config member has been removed in newer kernels */
 #else
-	wdev->wiphy->wowlan.flags = WIPHY_WOWLAN_ANY;
+    wdev->wiphy->wowlan.flags = WIPHY_WOWLAN_ANY;
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0) */
 #endif /* CONFIG_PM && WL_CFG80211_P2P_DEV_IF */
 
