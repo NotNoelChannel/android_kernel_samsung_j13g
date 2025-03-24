@@ -1188,11 +1188,7 @@ out_nattch:
 		shm_destroy(ns, shp);
 	else
 		shm_unlock(shp);
-<<<<<<< HEAD
 	up_write(&shm_ids(ns).rwsem);
-	return err;
-
-	up_write(&shm_ids(ns).rw_mutex);
 	return err;
 
 out_unlock:
